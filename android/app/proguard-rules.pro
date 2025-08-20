@@ -1,0 +1,2 @@
+-keep class com.keyence.** { *; }
+-dontwarn com.keyence.**

@@ -3,13 +3,18 @@ package com.example.keyence_flutter_demo;
 import androidx.annotation.NonNull;
 import android.os.Bundle;
 import android.util.Log;
+import android.os.Handler;
+import android.os.Looper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 import io.flutter.embedding.android.FlutterActivity;
 import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.plugin.common.MethodChannel;
+import io.flutter.plugin.common.EventChannel;
 
 import com.keyence.autoid.sdk.scan.ScanManager;
 import com.keyence.autoid.sdk.scan.DecodeResult;
@@ -18,9 +23,14 @@ import com.keyence.autoid.sdk.scan.scanparams.CodeType;
 
 public class MainActivity extends FlutterActivity implements ScanManager.DataListener {
     private static final String CHANNEL = "keyence_scanner/methods";
+    private static final String EVENTS = "keyence_scanner/events";
+    private final Handler main = new Handler(Looper.getMainLooper());
+
+    private EventChannel.EventSink sink;
     private ScanManager mScanManager;
     private ScanParams mScanParams;
     private CodeType mCodeType;
+    private MethodChannel methodChannel;
 
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
@@ -47,17 +57,35 @@ public class MainActivity extends FlutterActivity implements ScanManager.DataLis
                         result.error("KEYENCE_ERR", e.getMessage(), null);
                     }
                 });
+
+        new EventChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(),
+                EVENTS).setStreamHandler(new EventChannel.StreamHandler() {
+                    @Override
+                    public void onListen(Object args, EventChannel.EventSink events) {
+                        sink = events;
+
+                        // 🔎 Send a test event so you can see it's working
+                        // sendScan("testscan");
+                    }
+
+                    @Override
+                    public void onCancel(Object args) {
+                        sink = null;
+                    }
+                });
     }
 
     // Create a read event.
     @Override
     public void onDataReceived(DecodeResult decodeResult) {
+        List<Map<String, Object>> scans = new ArrayList<>();
         // Acquire the reading result.
         DecodeResult.Result result = decodeResult.getResult();
 
         if (result == DecodeResult.Result.CANCELED) {
             Log.d("KeyenceScan", "User clicked CANCEL / Invalid scan result");
-
+            sendScan(scans);
         } else if (result == DecodeResult.Result.SUCCESS) {
             Log.d("KeyenceScan", "User clicked SEND / Scan completed successfully");
 
@@ -66,11 +94,23 @@ public class MainActivity extends FlutterActivity implements ScanManager.DataLis
             // Get all scanned Code Type as a list of Strings
             List<String> codeTypeList = decodeResult.getCodeTypeList();
             // Loop through them
+
+            // for (int i = 0; i < dataList.size(); i++) {
+            // String data = dataList.get(i);
+            // String codeType = codeTypeList.get(i);
+            // Map<String, String> keyValuePair = new HashMap<>();
+            // keyValuePair.put(codeType, data);
+            // scanSet.put(i, keyValuePair); // String
+            // Log.d("KeyenceScan", i + ": type=" + codeType + ", data=" + data);
+            // }
             for (int i = 0; i < dataList.size(); i++) {
-                String data = dataList.get(i);
-                String codeType = codeTypeList.get(i);
-                Log.d("KeyenceScan", i + ": type=" + codeType + ", data=" + data);
+                Map<String, Object> scan = new HashMap<>();
+                scan.put("Index", i);
+                scan.put("CodeType", codeTypeList.get(i));
+                scan.put("Data", dataList.get(i));
+                scans.add(scan);
             }
+            sendScan(scans);
         }
     }
 
@@ -171,4 +211,10 @@ public class MainActivity extends FlutterActivity implements ScanManager.DataLis
         }
     }
 
+    /** Call this from your Keyence SDK callback. */
+    private void sendScan(List<Map<String, Object>> scans) {
+        if (sink == null)
+            return;
+        main.post(() -> sink.success(scans)); // send on main thread
+    }
 }

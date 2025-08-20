@@ -4,12 +4,16 @@ import 'package:flutter/services.dart';
 
 class ScanTestPage extends StatefulWidget {
   const ScanTestPage({super.key});
-
   @override
   State<ScanTestPage> createState() => _ScanTestPageState();
 }
 
 class _ScanTestPageState extends State<ScanTestPage> {
+  // static const _ch = MethodChannel('keyence_scanner/methods');
+  static const _events = EventChannel('keyence_scanner/events');
+  StreamSubscription? _sub;
+  String last = '';
+
   final s1 = TextEditingController();
   final s2 = TextEditingController();
   final s3 = TextEditingController();
@@ -18,12 +22,45 @@ class _ScanTestPageState extends State<ScanTestPage> {
   void initState() {
     super.initState();
 
+    // _ch.setMethodCallHandler((call) async {
+    //   if (call.method == 'onScan') {
+    //     final String code = call.arguments as String; // just a String
+    //     setState(() => last = code);
+    //     s2.text = last;
+    //   }
+    // });
+    _sub = _events.receiveBroadcastStream().listen(
+      (event) {
+        final scans = (event as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+
+        // for (final s in scans) {
+        //   final idx = s['Index'] as int;
+        //   final type = s['CodeType'] as String;
+        //   final data = s['Data'] as String;
+        // }
+
+        final ctrls = [s1, s2, s3];
+        for (var i = 0; i < ctrls.length; i++) {
+          if (i < scans.length) {
+            ctrls[i].text = '${scans[i]["CodeType"]}:${scans[i]["Data"]}';
+          } else {
+            ctrls[i].clear();
+          }
+        }
+      },
+      onError: (e) {
+        setState(() => last = 'error: $e');
+      },
+    );
     // 👉 Run once when page is opened
-    KeyenceScanner.scanController("ScanMode", "Default");
+    // KeyenceScanner.scanController("ScanMode", "Default");
   }
 
   @override
   void dispose() {
+    _sub?.cancel();
     s1.dispose();
     s2.dispose();
     s3.dispose();
@@ -43,7 +80,7 @@ class _ScanTestPageState extends State<ScanTestPage> {
               TextField(
                 controller: s1,
                 decoration: const InputDecoration(
-                  labelText: 'String 1',
+                  labelText: 'Barcode 1',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -51,7 +88,7 @@ class _ScanTestPageState extends State<ScanTestPage> {
               TextField(
                 controller: s2,
                 decoration: const InputDecoration(
-                  labelText: 'String 2',
+                  labelText: 'Barcode 2',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -59,7 +96,7 @@ class _ScanTestPageState extends State<ScanTestPage> {
               TextField(
                 controller: s3,
                 decoration: const InputDecoration(
-                  labelText: 'String 3',
+                  labelText: 'Barcode 3',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -76,10 +113,10 @@ class _ScanTestPageState extends State<ScanTestPage> {
                 children: [
                   _btn('Lock', () => _onTap('Lock')),
                   _btn('Unlock', () => _onTap('Unlock')),
-                  _btn('EANOnly', () => _onTap('EANOnly')),
-                  _btn('LLWR', () => _onTap('LLWR')),
+                  _btn('EAN Only', () => _onTap('EANOnly')),
+                  _btn('LLWR Mode', () => _onTap('LLWR')),
                   _btn('Button 5', () => _onTap('btn5')),
-                  _btn('Button 6', () => _onTap('btn6')),
+                  _btn('Clear', () => _onTap('Clear')),
                 ],
               ),
             ],
@@ -111,8 +148,12 @@ class _ScanTestPageState extends State<ScanTestPage> {
       case 'btn5':
         KeyenceScanner.scanController("Button5", "Action");
         break;
-      case 'btn6':
-        KeyenceScanner.scanController("Button6", "Action");
+      case 'Clear':
+        // KeyenceScanner.scanController("Clear", "Clear");
+        final ctrls = [s1, s2, s3];
+        for (var i = 0; i < ctrls.length; i++) {
+          ctrls[i].clear();
+        }
         break;
     }
   }

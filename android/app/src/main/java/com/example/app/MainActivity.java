@@ -94,15 +94,6 @@ public class MainActivity extends FlutterActivity implements ScanManager.DataLis
             // Get all scanned Code Type as a list of Strings
             List<String> codeTypeList = decodeResult.getCodeTypeList();
             // Loop through them
-
-            // for (int i = 0; i < dataList.size(); i++) {
-            // String data = dataList.get(i);
-            // String codeType = codeTypeList.get(i);
-            // Map<String, String> keyValuePair = new HashMap<>();
-            // keyValuePair.put(codeType, data);
-            // scanSet.put(i, keyValuePair); // String
-            // Log.d("KeyenceScan", i + ": type=" + codeType + ", data=" + data);
-            // }
             for (int i = 0; i < dataList.size(); i++) {
                 Map<String, Object> scan = new HashMap<>();
                 scan.put("Index", i);

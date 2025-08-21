@@ -9,7 +9,7 @@ class ScanTestPage extends StatefulWidget {
 }
 
 class _ScanTestPageState extends State<ScanTestPage> {
-  // static const _ch = MethodChannel('keyence_scanner/methods');
+  static const _channel = MethodChannel('keyence_scanner/methods');
   static const _events = EventChannel('keyence_scanner/events');
   StreamSubscription? _sub;
   String last = '';
@@ -21,32 +21,25 @@ class _ScanTestPageState extends State<ScanTestPage> {
   @override
   void initState() {
     super.initState();
+    // 👉 Run once when page is opened, Set Scan Mode to default
+    KeyenceScanner.scanController("ScanMode", "Default");
 
-    // _ch.setMethodCallHandler((call) async {
-    //   if (call.method == 'onScan') {
-    //     final String code = call.arguments as String; // just a String
-    //     setState(() => last = code);
-    //     s2.text = last;
-    //   }
-    // });
     _sub = _events.receiveBroadcastStream().listen(
       (event) {
         final scans = (event as List)
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
 
-        // for (final s in scans) {
-        //   final idx = s['Index'] as int;
-        //   final type = s['CodeType'] as String;
-        //   final data = s['Data'] as String;
-        // }
-
-        final ctrls = [s1, s2, s3];
-        for (var i = 0; i < ctrls.length; i++) {
-          if (i < scans.length) {
-            ctrls[i].text = '${scans[i]["CodeType"]}:${scans[i]["Data"]}';
-          } else {
-            ctrls[i].clear();
+        if (scans.isEmpty) {
+          return;
+        } else {
+          final ctrls = [s1, s2, s3];
+          for (var i = 0; i < ctrls.length; i++) {
+            if (i < scans.length) {
+              ctrls[i].text = '${scans[i]["CodeType"]}:${scans[i]["Data"]}';
+            } else {
+              ctrls[i].clear();
+            }
           }
         }
       },
@@ -54,8 +47,6 @@ class _ScanTestPageState extends State<ScanTestPage> {
         setState(() => last = 'error: $e');
       },
     );
-    // 👉 Run once when page is opened
-    // KeyenceScanner.scanController("ScanMode", "Default");
   }
 
   @override
@@ -149,7 +140,6 @@ class _ScanTestPageState extends State<ScanTestPage> {
         KeyenceScanner.scanController("Button5", "Action");
         break;
       case 'Clear':
-        // KeyenceScanner.scanController("Clear", "Clear");
         final ctrls = [s1, s2, s3];
         for (var i = 0; i < ctrls.length; i++) {
           ctrls[i].clear();
@@ -159,9 +149,9 @@ class _ScanTestPageState extends State<ScanTestPage> {
   }
 }
 
+// A class to handle scanner interactions
 class KeyenceScanner {
-  static const _channel = MethodChannel('keyence_scanner/methods');
   static Future<void> scanController(String method, String argument) async {
-    await _channel.invokeMethod(method, argument);
+    await _ScanTestPageState._channel.invokeMethod(method, argument);
   }
 }

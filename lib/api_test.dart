@@ -53,6 +53,12 @@ class _ApiTestPageState extends State<ApiTestPage> {
   final bool _loading = false;
   Duration elapsed = Duration.zero; //performance measure
 
+  @override
+  void initState() {
+    super.initState();
+    _selected = Endpoint.values.first; // reset every time page is created
+  }
+
   Future<void> _callSelected() async {
     try {
       setState(() {
@@ -197,7 +203,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -231,6 +237,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
               ),
             ),
+            const SizedBox(height: 10),
             Expanded(
               child: Container(
                 width: double.infinity,

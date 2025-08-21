@@ -21,7 +21,7 @@ import com.keyence.autoid.sdk.scan.DecodeResult;
 import com.keyence.autoid.sdk.scan.scanparams.ScanParams;
 import com.keyence.autoid.sdk.scan.scanparams.CodeType;
 
-public class MainActivity extends FlutterActivity implements ScanManager.DataListener {
+public class KeyenceScannerActivity extends FlutterActivity implements ScanManager.DataListener {
     private static final String CHANNEL = "keyence_scanner/methods";
     private static final String EVENTS = "keyence_scanner/events";
     private final Handler main = new Handler(Looper.getMainLooper());

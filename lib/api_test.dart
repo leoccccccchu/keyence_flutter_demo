@@ -15,21 +15,32 @@ class ApiTestPage extends StatefulWidget {
 }
 
 //Endpoint dropdown list
-enum Endpoint { hhtlogin, hhtitems, hhtlocations }
+enum Endpoint {
+  all,
+  hhtlogin,
+  hhtitems,
+  hhtbarcodes,
+  hhtlocations,
+  hhtturncodes,
+}
 
 Endpoint _selected = Endpoint.values.first;
 
 extension EndpointLabel on Endpoint {
   String get label {
     switch (this) {
-      // case Endpoint.jsonplaceholder:
-      //   return 'jsonplaceholder';
+      case Endpoint.all:
+        return 'All Master Data';
       case Endpoint.hhtlogin:
-        return 'hhtlogin';
+        return 'Login';
       case Endpoint.hhtitems:
-        return 'hhtitems';
+        return 'Item';
+      case Endpoint.hhtbarcodes:
+        return 'Barcode';
       case Endpoint.hhtlocations:
-        return 'hhtlocations';
+        return 'Location';
+      case Endpoint.hhtturncodes:
+        return 'Turn Code';
     }
   }
 }
@@ -40,18 +51,23 @@ class _ApiTestPageState extends State<ApiTestPage> {
     BaseOptions(
       connectTimeout: const Duration(seconds: 30),
       receiveTimeout: const Duration(seconds: 60),
-      headers: const {'Accept': '*/*', 'User-Agent': 'BCApp/1.0 (Flutter Dio)'},
+      headers: const {
+        'Accept': 'application/json',
+        //change to config later
+        'Authorization': 'Basic YXBpOiR6UV4kMDcyYmY3Rg==',
+      },
       validateStatus: (_) => true,
     ),
   );
   String statusCode = "";
+  int pageCount = 0;
   // String responseBody = "Response Body";
   // NOT shown, never force Flutter to lay out megabytes of text, or else it will crash
   String responseBodyFull = "";
   String responseBodyPreview = ''; // Shown in the scroll box
   static const int kPreviewCap = 40000; // ~40k chars is safe for UI
   final bool _loading = false;
-  Duration elapsed = Duration.zero; //performance measure
+  String elapsed = "00:00.000"; //performance measure
 
   @override
   void initState() {
@@ -59,49 +75,104 @@ class _ApiTestPageState extends State<ApiTestPage> {
     _selected = Endpoint.values.first; // reset every time page is created
   }
 
-  Future<void> _callSelected() async {
+  // Example of using it (e.g., inside your button handler)
+  Future<void> onCallPressed() async {
+    resetResult();
+    final results = await selectEndPointAsync(dio);
+    updateResult(results);
+  }
+
+  // Call ALL endpoints concurrently
+  Future<List<Map<String, dynamic>>> selectEndPointAsync(Dio dio) async {
+    //select endpoints based on the dropdown selection
+    // If "all" is selected, call all endpoints
+    List endpoints = <Endpoint>[];
+    switch (_selected) {
+      case Endpoint.all:
+        endpoints = [
+          // Endpoint.hhtlogin,  //login not for master data
+          Endpoint.hhtitems,
+          Endpoint.hhtbarcodes,
+          Endpoint.hhtlocations,
+          Endpoint.hhtturncodes,
+        ];
+      default:
+        endpoints = [_selected];
+    }
+
+    //for each endpoint on list, call the API and return a list of results
+    final futures = endpoints
+        .map((endpoint) => _callEndPoint(dio, endpoint))
+        .toList();
+    return await Future.wait(futures);
+  }
+
+  // Call a single endpoint and return the result
+  Future<Map<String, dynamic>> _callEndPoint(Dio dio, Endpoint ep) async {
+    final sw = Stopwatch()..start(); // mark start
+    int page = 0;
+    String status = '--';
     try {
-      setState(() {
-        statusCode = '-';
-        responseBodyFull = '';
-        responseBodyPreview = '';
-        elapsed = Duration.zero;
-      });
-      // mark start
-      final sw = Stopwatch()..start();
-
       //Build URI
-      final uri = _bcUri(_selected, qp: _defaultQuery(_selected));
-      // Make API call
-      final response = await dio.get(
-        uri.toString(),
-        options: Options(
-          headers: {
-            'Accept': 'application/json;odata.metadata=none',
-            'Authorization': 'Basic YXBpOiR6UV4kMDcyYmY3Rg==',
-          },
-        ),
-      );
+      final firstUrl = _bcUri(ep, qp: _defaultQuery(ep));
+      String? url = firstUrl.toString();
+      // while (url != null && pageCount <= 5) {
+      while (url != null) {
+        //fetchAllPages
+        // Make API call ****🚀
+        final response = await dio.get(
+          url,
+          options: Options(
+            headers: {
+              //change to config later
+              'Company': 'CDN',
+              //change to config later
+              'Prefer': 'odata.maxpagesize=5000',
+            },
+          ),
+        );
+        page++;
+        final data = response.data as Map<String, dynamic>;
 
-      if (!mounted) return;
+        // Get nextLink if exists
+        url = data['@odata.nextLink'] as String?;
+
+        //*******aysnc insert to database here if needed  ******
+
+        //only keep preview of the last page
+        if (url == null) {
+          status = response.statusCode.toString();
+          if (_selected != Endpoint.all) {
+            responseBodyFull = _prettyJson(
+              response.data,
+            ); // keep full, off-screen
+          }
+        }
+      }
+
       sw.stop();
 
-      setState(() {
-        // // responseBody = _pretty("${response.data}");
-        // responseBodyFull = "${response.data}";
-        statusCode = "${response.statusCode}";
-        responseBodyFull = _prettyJson(response.data); // keep full, off-screen
-        responseBodyPreview = _toPreview(response.data); // render only preview
-        elapsed = sw.elapsed;
-      });
+      return {
+        'endpoint': ep.name,
+        'status': status,
+        'duration': fmtMinSecMs(sw.elapsed),
+        'page': page,
+        'data': responseBodyFull, // keep full data for debugging
+      };
     } catch (e) {
-      setState(() {
-        statusCode = "Error: $e";
-      });
+      sw.stop();
+      return {
+        'endpoint': ep.name,
+        'status': 'ERR',
+        'duration': fmtMinSecMs(sw.elapsed),
+        'error': e.toString(),
+      };
     }
   }
 
   final endpoint = _selected.name;
+  // final fqdn = "bc.cosme.work"; //change to config later
+  // final port = "7078"; //change to config later
   final fqdn = "bc-dev-ra.cosme.work"; //change to config later
   final port = "2053"; //change to config later
   Uri _bcUri(Endpoint e, {Map<String, String>? qp}) {
@@ -124,8 +195,20 @@ class _ApiTestPageState extends State<ApiTestPage> {
           r'$expand': 'hhtcompanies', //change to config later
         };
       case Endpoint.hhtitems:
-        return {};
+        return {
+          r'$select': //only return needed fields, this can make payload much smaller and faster
+              'number,whCode,description,net,color,brand,itemCateCode,itemSubCate1,itemSubCate2,lastModifyDateTime',
+        };
+      case Endpoint.hhtbarcodes:
+        return {
+          r'$select': //only return needed fields, this can make payload much smaller and faster
+              'number,barcode,lastModifyDateTime',
+        };
       case Endpoint.hhtlocations:
+        return {};
+      case Endpoint.hhtturncodes:
+        return {};
+      case Endpoint.all:
         return {};
     }
   }
@@ -145,15 +228,54 @@ class _ApiTestPageState extends State<ApiTestPage> {
     return '${s.substring(0, cap)}\n…(truncated, ${s.length} chars total)';
   }
 
-  String secs(Duration d, {int decimals = 2}) =>
-      (d.inMilliseconds / 1000).toStringAsFixed(decimals); // "3.27"
+  String fmtMinSecMs(Duration d) {
+    final minutes = d.inMinutes; // total minutes
+    final seconds = d.inSeconds % 60; // 0–59
+    final millis = d.inMilliseconds % 1000; // 0–999
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}.'
+        '${millis.toString().padLeft(3, '0')}';
+  }
+
+  void resetResult() {
+    if (!mounted) return;
+    setState(() {
+      statusCode = '--';
+      pageCount = 0;
+      responseBodyPreview = '';
+      elapsed = "00:00.000";
+    });
+  }
+
+  void updateResult(List<Map<String, dynamic>> results) {
+    if (!mounted) return;
+    String body = '';
+    if (_selected == Endpoint.all) {
+      body = results
+          .map(
+            (r) =>
+                '• ${r['endpoint']} -${r['status']} | ${r['page']} | ${r['duration']}',
+          )
+          .join('\n');
+      setState(() {
+        responseBodyPreview = body;
+      });
+    } else {
+      final r = results.first; // only one result
+      setState(() {
+        statusCode = r['status'];
+        responseBodyPreview = _toPreview(r['data']);
+        elapsed = r['duration'];
+        pageCount = r['page'] is int ? r['page'] as int : 0;
+      });
+    }
+  }
 
   @override
   void dispose() {
     // Close HTTP client resources and clean up controllers/listeners if added later.
     // Dio supports close(); set force=true to terminate pending connections if any.
     dio.close(force: true);
-
     super.dispose();
   }
 
@@ -190,7 +312,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
                 SizedBox(
                   height: 48,
                   child: ElevatedButton.icon(
-                    onPressed: _loading ? null : _callSelected,
+                    onPressed: _loading ? null : () => onCallPressed(),
                     icon: _loading
                         ? const SizedBox(
                             width: 16,
@@ -216,11 +338,11 @@ class _ApiTestPageState extends State<ApiTestPage> {
                 ).colorScheme.surfaceContainerHighest.withOpacity(0.5),
               ),
               child: Text(
-                'Duration: ${secs(elapsed, decimals: 2)} s',
+                ' Duration: $elapsed',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -234,6 +356,23 @@ class _ApiTestPageState extends State<ApiTestPage> {
               ),
               child: Text(
                 'Status Code:  $statusCode',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Theme.of(context).dividerColor),
+                color: Theme.of(
+                  context,
+                  // ignore: deprecated_member_use
+                ).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+              ),
+              child: Text(
+                'Page Count:  $pageCount',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
               ),
             ),

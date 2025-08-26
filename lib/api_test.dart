@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'dart:math';
+import 'package:dio_smart_retry/dio_smart_retry.dart';
 
 void main() {
   runApp(const ApiTestPage());
@@ -55,20 +57,89 @@ final options = [
 
 EndpointOption? selected;
 
-class _ApiTestPageState extends State<ApiTestPage> {
-  final _scroll = ScrollController();
-  final Dio dio = Dio(
+final username = 'api';
+final password = r'$zQ^$072bf7F';
+// final endpoint = selected?.name;
+// final fqdn = "bc.cosme.work"; //change to config later
+// final port = "7078"; //change to config later
+// final fqdn = "bc-dev-ra.cosme.work"; //change to config later
+// final port = "2053"; //change to config later
+// final instance = "HHTAPI"; //change to config later
+final fqdn = "bc-dev.cosme.work"; //change to config later
+final port = "7058"; //change to config later
+final instance = "BC240"; //change to config later
+Dio buildDio() {
+  final dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 60),
-      headers: const {
-        'Accept': 'application/json',
-        //change to config later
-        'Authorization': 'Basic YXBpOiR6UV4kMDcyYmY3Rg==',
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 30),
+      headers: {
+        'Accept': 'application/json;odata.metadata=none',
+        'Authorization':
+            'Basic ${base64Encode(utf8.encode('$username:$password'))}',
       },
+      // Let non-2xx pass so you can parse error bodies yourself
       validateStatus: (_) => true,
     ),
   );
+
+  // Optional: quick logging (turn on as needed)
+  dio.interceptors.add(
+    LogInterceptor(
+      request: false,
+      requestHeader: false,
+      requestBody: false,
+      responseHeader: false,
+      responseBody: false,
+    ),
+  );
+
+  // Backoff with light jitter helper
+  List<Duration> backoff({int retries = 3, int baseMs = 800}) {
+    final rnd = Random();
+    return List.generate(retries, (i) {
+      final ms = baseMs * pow(2, i).toInt(); // 0:800ms, 1:1600ms, 2:3200ms
+      final jitter = rnd.nextInt(250); // +0~250ms jitter
+      return Duration(milliseconds: ms + jitter);
+    });
+  }
+
+  bool shouldRetry(DioException e, int attempt) {
+    // Retry for network/timeout issues
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.unknown) {
+      return true;
+    }
+
+    // Retry for 5xx server errors (not 4xx)
+    if (e.type == DioExceptionType.badResponse) {
+      final code = e.response?.statusCode ?? 0;
+      if (code >= 500 && code < 600) return true;
+    }
+
+    // Do not retry cancel / 4xx / others
+    return false;
+  }
+
+  dio.interceptors.add(
+    RetryInterceptor(
+      dio: dio,
+      retries: 3, // total attempts = 1 (original) + 3
+      retryDelays: backoff(retries: 3), // 0.8s, 1.6s, 3.2s (+ jitter)
+      retryEvaluator: shouldRetry, // best-practice rules
+      logPrint: null, // set to print if you want to log
+    ),
+  );
+
+  return dio;
+}
+
+class _ApiTestPageState extends State<ApiTestPage> {
+  final _scroll = ScrollController();
+  final dio = buildDio();
   String statusCode = "";
   int pageCount = 0;
   // String responseBody = "Response Body";
@@ -86,14 +157,28 @@ class _ApiTestPageState extends State<ApiTestPage> {
     selected = options.first;
   }
 
+  /// Define a unique key for an endpoint (adjust to your type)
+  final Set<String> _inFlight = <String>{};
   //API CalL
   // Example of using it (e.g., inside your button handler)
   Future<void> onCallPressed() async {
-    resetResult();
-    await selectEndPointAsync(dio);
-    //Make end for "all"
-    if (selected?.endpointValue == "all") {
-      updateResultEnd();
+    final key =
+        (selected?.endpointCompany ?? '') + (selected?.endpointValue ?? '');
+    if (_inFlight.contains(key)) {
+      // already running, ignore this tap
+      return;
+    }
+    _inFlight.add(key);
+
+    try {
+      resetResult();
+      await selectEndPointAsync(dio);
+      //Make end for "all"
+      if (selected?.endpointValue == "all") {
+        updateResultEnd();
+      }
+    } finally {
+      _inFlight.remove(key);
     }
   }
 
@@ -128,7 +213,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
 
   // Call a single endpoint and return the result
   Future<void> _callEndPoint(Dio dio, EndpointOption ep) async {
-    late final Map<String, dynamic> result;
+    Map<String, dynamic> result = {};
     final sw = Stopwatch()..start(); // mark start
     int page = 0;
     String status = '--';
@@ -143,6 +228,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
         final response = await dio.get(
           url,
           options: Options(
+            // extra: {'retry': false}, // dio_smart_retry respects this flag, disable retry for a call
             headers: {
               //change to config later
               'Company': ep.endpointCompany,
@@ -152,21 +238,28 @@ class _ApiTestPageState extends State<ApiTestPage> {
           ),
         );
         page++;
-        final data = response.data as Map<String, dynamic>;
 
-        // Get nextLink if exists
-        url = data['@odata.nextLink'] as String?;
+        if (isOk(response)) {
+          final data = response.data as Map<String, dynamic>;
+          // Get nextLink if exists
+          url = data['@odata.nextLink'] as String?;
 
-        //*******aysnc insert to database here if needed  ******
+          //*******aysnc insert to database here if needed  ******
 
-        //only keep preview of the last page
-        if (url == null) {
-          status = response.statusCode.toString();
-          if (selected?.endpointValue != "all") {
-            responseBodyFull = _prettyJson(
-              response.data,
-            ); // keep full, off-screen
+          //only keep preview of the last page
+          if (url == null) {
+            status = response.statusCode.toString();
+            if (selected?.endpointValue != "all") {
+              responseBodyFull = _prettyJson(
+                response.data,
+              ); // keep full, off-screen
+            }
           }
+        } else {
+          //error
+          status = response.statusCode.toString();
+          url = null; //stop loop on error
+          responseBodyFull = response.statusMessage.toString();
         }
       }
 
@@ -185,27 +278,23 @@ class _ApiTestPageState extends State<ApiTestPage> {
       sw.stop();
       result = {
         'endpoint': ep.endpointValue,
+        'company': ep.endpointCompany,
         'status': 'ERR',
         'duration': fmtMinSecMs(sw.elapsed),
-        'error': e.toString(),
+        'page': page,
+        'data': e.toString(),
       };
       updateResult([result]);
     }
-    // return result;
   }
 
-  // final endpoint = selected?.name;
-  // final fqdn = "bc.cosme.work"; //change to config later
-  // final port = "7078"; //change to config later
-  final fqdn = "bc-dev-ra.cosme.work"; //change to config later
-  final port = "2053"; //change to config later
   Uri _bcUri(EndpointOption e, {Map<String, String>? qp}) {
     return Uri(
       scheme: 'https',
       host: fqdn,
       port: int.parse(port),
       path:
-          '/HHTAPI/api/CDN/HHT/v2.0/${e.endpointValue}', // <= hhtlogin / hhtitems / hhtlocations
+          '/$instance/api/CDN/HHT/v2.0/${e.endpointValue}', // <= hhtlogin / hhtitems / hhtlocations
       queryParameters: qp,
     );
   }
@@ -213,6 +302,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
   Map<String, String>? _defaultQuery(EndpointOption e) {
     Map<String, String> filter = {};
     switch (e.endpointValue) {
+      //only return needed fields, this can make payload much smaller and faster
       case "hhtlogin":
         filter = {
           r'$filter':
@@ -220,10 +310,18 @@ class _ApiTestPageState extends State<ApiTestPage> {
           r'$expand': 'hhtcompanies', //change to config later
         };
       case "hhtitems":
-        filter = {
-          r'$select': //only return needed fields, this can make payload much smaller and faster
-              'number,whCode,description,net,color,brand,itemCateCode,itemSubCate1,itemSubCate2,lastModifyDateTime',
-        };
+        switch (e.endpointCompany) {
+          case 'CDN':
+            filter = {
+              r'$select':
+                  'number,whCode,description,net,color,brand,itemCateCode,itemSubCate1,itemSubCate2,lastModifyDateTime',
+            };
+          case 'LL':
+            filter = {
+              r'$select':
+                  'number,llmsCode,description,net,color,brand,itemCD,power,axis,dia,cy,bc,packing,addition,cooSetID,lastModifyDateTime',
+            };
+        }
       case "hhtbarcodes":
         filter = {
           r'$select': //only return needed fields, this can make payload much smaller and faster
@@ -278,11 +376,19 @@ class _ApiTestPageState extends State<ApiTestPage> {
     String body = '';
     if (selected?.endpointValue == "all") {
       body = results
-          .map(
-            (r) =>
-                '• ${r['company']} ${r['endpoint']} -${r['status']} | ${r['page']} | ${r['duration']}',
-          )
+          .map((r) {
+            final base =
+                '• ${r['company']} ${r['endpoint']} -${r['status']} | ${r['page']} | ${r['duration']}';
+
+            if (r['status'] == 'ERR') {
+              final errMsg = r['data']?.toString();
+              return '$base\n   ↳ $errMsg';
+            } else {
+              return base;
+            }
+          })
           .join('\n');
+
       setState(() {
         responseBodyPreview += '$body\n';
       });
@@ -293,6 +399,7 @@ class _ApiTestPageState extends State<ApiTestPage> {
         responseBodyPreview = _toPreview(r['data']);
         elapsed = r['duration'];
         pageCount = r['page'] is int ? r['page'] as int : 0;
+        // responseBodyPreview = r['error'];
       });
     }
   }
@@ -303,6 +410,9 @@ class _ApiTestPageState extends State<ApiTestPage> {
       responseBodyPreview += '\n End';
     });
   }
+
+  bool isOk(Response res) =>
+      res.statusCode != null && res.statusCode! >= 200 && res.statusCode! < 300;
 
   @override
   void dispose() {
